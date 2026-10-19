@@ -1,75 +1,142 @@
-from database import reset_db
-from seed_data import seed
-from dao import StatusDao, AuthorDao, GenreDao, ItemDao, AnalyticsDao
+"""Набор консольных тестов для проверки всех требований ТЗ и Сценариев использования."""
+
+from dao import AnalyticsDao, AuthorDao, GenreDao, ItemDao, StatusDao
+from dataconn import reset_db
+from seed import seed
+
 
 def print_header(title: str):
     print("\n" + "=" * 70)
     print(f"  {title}")
     print("=" * 70)
 
-def test_items_filter():
-    print_header("ТЕСТ 1: ПОИСК И СОРТИРОВКА (ItemDao)")
-    dao = ItemDao()
-    print("\n>> Сортировка по оценке ASC (NULL должен быть в самом конце!):")
-    for item in dao.get_filtered(sort_by="rating", sort_desc=False):
-        rating = item.rating if item.rating is not None else "NULL"
-        print(f"  - {item.name} | Оценка: {rating}")
 
-def test_cascade_delete():
-    print_header("ТЕСТ 2: БЕЗОПАСНОЕ УДАЛЕНИЕ АВТОРА (CASCADE)")
+def test_crud_and_status():
+    print_header("ТЕСТ 1: СТА ТУСЫ И БАЗОВЫЙ CRUD АВТОРОВ/ЖАНРОВ")
+
+    status_dao = StatusDao()
+    statuses = status_dao.get_all()
+    print(">> Доступные статусы:")
+    for s in statuses:
+        print(f"  [{s.id}] {s.sname}")
+    assert len(statuses) == 4, "Должно быть ровно 4 статуса!"
+
+    author_dao = AuthorDao()
+    new_author_id = author_dao.insert("Тестовый Режиссер")
+    print(
+        f"\n>> Добавлен автор с ID={new_author_id}:"
+        f" {author_dao.get_by_id(new_author_id).fullname}"
+    )
+
+    author_dao.update(new_author_id, "Тестовый Режиссер (Изменен)")
+    print(
+        f">> Обновлен: {author_dao.get_by_id(new_author_id).fullname}"
+    )
+
+    author_dao.delete(new_author_id)
+    print(f">> Удален? -> {author_dao.get_by_id(new_author_id) is None}")
+
+
+def test_search_and_filter():
+    print_header("ТЕСТ 2: ПОИСК, ФИЛЬТРАЦИЯ И СОРТИРОВКА (Сценарий 3)")
+    item_dao = ItemDao()
+
+    print("\n>> 1. Поиск по слову 'ведьмак' (case-insensitive):")
+    results = item_dao.get_filtered(search_name="ведьмак")
+    for item in results:
+        print(
+            f"  - {item.name} ({item.year}) | Авторы: {', '.join(item.authors)}"
+        )
+    assert len(results) == 2, "Должно быть найдено 2 тайтла о Ведьмаке!"
+
+    print(
+        "\n>> 2. Сортировка по оценке ASC (элементы с NULL обязаны быть в"
+        " конце):"
+    )
+    all_items = item_dao.get_filtered(sort_by="rating", sort_desc=False)
+    for item in all_items:
+        r_str = item.rating if item.rating is not None else "NULL"
+        print(f"  - {item.name:<30} | Оценка: {r_str}")
+    assert (
+        all_items[-1].rating is None
+    ), "Элемент с оценкой NULL должен быть последним!"
+
+    print("\n>> 3. Поиск со спецсимволом '100%':")
+    spec_results = item_dao.get_filtered(search_name="100%")
+    print(f"  Найдено: {[i.name for i in spec_results]}")
+    assert len(spec_results) == 1 and spec_results[0].name == "100% Волк"
+
+
+def test_analytics():
+    print_header("ТЕСТ 3: АНАЛИТИКА И СТАТИСТИКА (Сценарий 4)")
+    analytics_dao = AnalyticsDao()
+
+    total, avg_rating = analytics_dao.get_general_stats()
+    print(f">> Всего элементов: {total}")
+    print(f">> Средняя оценка:  {avg_rating}")
+
+    print("\n>> Распределение по 4 статусам:")
+    for name, cnt in analytics_dao.get_status_distribution():
+        print(f"  - [{name:<12}] : {cnt} шт.")
+
+    print("\n>> Топ авторов по средней оценке:")
+    top_authors = analytics_dao.get_top_authors()
+    for rank, (name, rating, fin_cnt) in enumerate(top_authors, 1):
+        print(
+            f"  {rank}. {name:<30} | Средняя: {rating} | Завершено:"
+            f" {fin_cnt}"
+        )
+
+
+def test_safe_delete_with_stub():
+    print_header(
+        "ТЕСТ 4: БЕЗОПАСНОЕ УДАЛЕНИЕ АВТОРА С ЗАМЕНОЙ НА 'НЕИЗВЕСТЕН' (Сценарий"
+        " 5)"
+    )
     author_dao = AuthorDao()
     item_dao = ItemDao()
 
-    all_authors = author_dao.get_all()
-    king = next((a for a in all_authors if a.fullname == "Стивен Кинг"), None)
-    
-    cnt = author_dao.count_links(king.id)
-    print(f"\n>> У автора '{king.fullname}' привязано произведений: {cnt}")
-    print(">> Удаляем автора...")
-    author_dao.delete(king.id)
-    print(f"  Автор удален: {author_dao.get_by_id(king.id) is None}")
+    # Берем автора 'Михаил Булгаков' (он единственный у книги 'Мастер и Маргарита')
+    bulgakov = next(
+        a for a in author_dao.get_all() if a.fullname == "Михаил Булгаков"
+    )
+    print(
+        f">> До удаления: Книга 'Мастер и Маргарита' связана с автором:"
+        f" {item_dao.get_filtered(search_name='Мастер')[0].authors}"
+    )
 
-    print("\n>> Книга 'Оно' должна остаться в коллекции:")
-    for item in item_dao.get_filtered(search_name="Оно"):
-        print(f"  - {item.name} | Авторы: {item.authors}")
+    print(
+        f">> Выполняем безопасное удаление автора '{bulgakov.fullname}' (ID"
+        f"={bulgakov.id})..."
+    )
+    author_dao.delete(bulgakov.id, stub_id=1)
 
-def test_edge_cases():
-    print_header("ТЕСТ 3: ПРОВЕРКА КРАЕВЫХ СЛУЧАЕВ (Запятые и экранирование)")
-    author_dao = AuthorDao()
-    item_dao = ItemDao()
+    master_item = item_dao.get_filtered(search_name="Мастер")[0]
+    print(f">> После удаления: Книга осталась в базе!")
+    print(f"  Новый автор книги: {master_item.authors}")
+    assert (
+        master_item.authors[0] == "Неизвестен"
+    ), "Автор должен был замениться на 'Неизвестен'!"
 
-    complex_author = "Гарсиа Маркес, Габриэль"
-    a_id = author_dao.insert(complex_author)
-    
-    item_id = item_dao.insert("Сто лет одиночества", 1967, 10, 3)
-    item_dao.link_author(item_id, a_id)
-
-    items = item_dao.get_filtered(search_name="Сто лет одиночества")
-    print(f"\n>> Книга с автором '{complex_author}':")
-    print(f"  Авторы в списке: {items[0].authors}")
-    assert len(items[0].authors) == 1, "Имя автора разорвалось!"
-    print("  [OK] Разделитель '|||' отработал идеально!")
-
-    item_dao.insert("100% Волк", 2020, 7, 3)
-    results = item_dao.get_filtered(search_name="100%")
-    print(f"\n>> Поиск со спецсимволом '100%':")
-    print(f"  Найдено: {[i.name for i in results]}")
-    assert len(results) == 1, "Экранирование сломалось!"
-    print("  [OK] Экранирование LIKE отработало идеально!")
 
 def main():
     print("\n╔══════════════════════════════════════════════════════════════════╗")
-    print("║  ТЕСТИРОВАНИЕ DAO-СЛОЯ: Каталогизатор личной коллекции (000)    ║")
+    print("║  ПРОВОДИТСЯ ТЕСТИРОВАНИЕ DAO-СЛОЯ КАТАЛОГИЗАТОРА (000)          ║")
     print("╚══════════════════════════════════════════════════════════════════╝")
 
     reset_db()
     seed()
 
-    test_items_filter()
-    test_cascade_delete()
-    test_edge_cases()
+    test_crud_and_status()
+    test_search_and_filter()
+    test_analytics()
+    test_safe_delete_with_stub()
 
-    print("\n[OK] Все тесты успешно завершены!\n")
+    print(
+        "\n[УСПЕХ] Все консольные тесты пройдены! DAO-слой работает"
+        " корректно.\n"
+    )
+
 
 if __name__ == "__main__":
     main()

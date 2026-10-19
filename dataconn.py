@@ -8,6 +8,12 @@ def get_connection() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_FILE)
     conn.execute("PRAGMA foreign_keys = ON;")
     conn.row_factory = sqlite3.Row
+
+    conn.create_function(
+        "LOWER", 1, lambda s: s.lower() if s is not None else None
+    )
+
+    return conn
     return conn
 
 def init_db() -> None:
